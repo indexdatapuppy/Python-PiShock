@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.1 (unreleased)
+
+- Remove upper bounds of dependencies. This resolves an issue with an old typer
+  version pulling in a new Click version, causing arguments to not be validated
+  properly.
+
 ## v1.2.0 (2025-05-30)
 
 - Declare support for Python 3.13 and 3.14 (no code changes required)
