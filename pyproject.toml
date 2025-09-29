@@ -8,12 +8,12 @@ authors = [
     { name = "Zerario", email = "derg@zerario.dev" },
 ]
 dependencies = [
-    "requests>=2.32.3,<3.0.0",
-    "typer>=0.16.0,<0.17.0",
-    "rich>=14.0.0,<15.0.0",
-    "typing-extensions>=4.13.2,<5.0.0",
-    "platformdirs>=4.3.8,<5.0.0",
-    "pyserial>=3.5,<4.0",
+    "requests>=2.32.3",
+    "typer>=0.16.0",
+    "rich>=14.0.0",
+    "typing-extensions>=4.13.2",
+    "platformdirs>=4.3.8",
+    "pyserial>=3.5",
 ]
 
 [project.urls]
