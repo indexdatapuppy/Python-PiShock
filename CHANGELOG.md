@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.2.1 (unreleased)
+## v1.2.1 (2025-09-29)
 
 - Remove upper bounds of dependencies. This resolves an issue with an old typer
   version pulling in a new Click version, causing arguments to not be validated
