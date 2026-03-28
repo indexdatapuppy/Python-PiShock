@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import enum
 import contextlib
-import dataclasses
 import http
 import json
 from typing import Any, Iterator
@@ -14,6 +13,8 @@ from pishock.zap import core
 
 NAME = "Python-PiShock"
 
+METHOD_GET = "GET"
+METHOD_POST = "POST"
 
 class Operation(enum.Enum):
     SHOCK = 0
@@ -48,6 +49,11 @@ class ShareCodeAlreadyUsedError(APIError):
 
 
 class ShareCodeNotFoundError(APIError):
+    """API returned: This code doesn't exist."""
+
+    TEXT = "This code doesn't exist."
+
+class SockerIdNotFoundError(APIError):
     """API returned: This code doesn't exist."""
 
     TEXT = "This code doesn't exist."
@@ -102,6 +108,20 @@ class BeepNotAllowedError(OperationNotAllowedError):
 
     TEXT = "Beep not allowed."
 
+class BadShockerRequestError(APIError):
+    """While creating a shocker, not enough information was supplied"""
+
+    TEXT = "You must specify either a shockerId or name when creating a shocker"
+
+class NonUniqueShockerNameError(APIError):
+    """While creating a shocker, zero or multiple shockers were found matching the supplied name"""
+
+    TEXT = "While creating a shocker, zero or multiple shockers were found matching the supplied name"
+
+class InvalidHTTPMethod(APIError):
+    """HTTP Request Malfomed with invalid method"""
+    TEXT = "Only GET and POST HTTP methods accepted at the moment"
+
 
 class HTTPError(APIError):
     """Invalid HTTP status from the API."""
@@ -121,17 +141,25 @@ class PiShockAPI:
 
     Arguments:
         username: Your `pishock.com <https://pishock.com/>`_ username.
-        api_key: The API key from the `"Account" menu <https://pishock.com/#/account>`_.
+        api_key: The API key from the `"Account" menu <https://login.pishock.com/account>`_.
     """
 
     def __init__(self, username: str, api_key: str) -> None:
         self.username = username
         self.api_key = api_key
 
+        self.obtain_user_id()
+
     def __repr__(self) -> str:
         return f"PiShockAPI(username={self.username!r}, api_key=...)"
+    
+    def get(self, endpoint: str, body: dict[str, Any] = {}, params: dict[str, str] = {}) -> requests.Response:
+        return self.request(method=METHOD_GET, endpoint=endpoint, body=body, params=params)
 
-    def request(self, endpoint: str, params: dict[str, Any]) -> requests.Response:
+    def post(self,  endpoint: str, body: dict[str, Any] = {}, params: dict[str, str] = {}) -> requests.Response:
+        return self.request(method=METHOD_POST, endpoint=endpoint, body=body, params=params)
+    
+    def request(self, method: str,  endpoint: str, body: dict[str, Any] = {}, params: dict[str, str] = {}) -> requests.Response:
         """Make a raw request to the API.
 
         All requests are POST requests with ``params`` passed as JSON, because the
@@ -142,18 +170,29 @@ class PiShockAPI:
         Raises:
             HTTPError: If the API returns an invalid HTTP status.
         """
-        params = {
-            "Username": self.username,
-            "Apikey": self.api_key,
-            **params,
+        headers = {
+            "User-Agent": f"{NAME}/{pishock.__version__}",
+            "X-PiShock-Api-Key": f"{self.api_key}",
+            "X-PiShock-UserId": f"{self.username}",
         }
-        headers = {"User-Agent": f"{NAME}/{pishock.__version__}"}
-        response = requests.post(
-            f"https://do.pishock.com/api/{endpoint}",
-            json=params,
-            headers=headers,
-        )
-
+        
+        if (method == METHOD_GET):
+            response = requests.get(
+                f"https://api.pishock.com/{endpoint}",
+                params=params,
+                json=body,
+                headers=headers,
+            )
+        elif (method == METHOD_POST):
+            response = requests.post(
+                f"https://api.pishock.com/{endpoint}",
+                params=params,
+                json=body,
+                headers=headers,
+            )
+        else:
+            raise InvalidHTTPMethod()
+        
         try:
             response.raise_for_status()
         except requests.HTTPError as e:
@@ -173,21 +212,32 @@ class PiShockAPI:
             raise
 
     def shocker(
-        self, sharecode: str, log_name: str = NAME, name: str | None = None
+        self, shocker_id: str | None = None, name: str | None = None, log_name: str = NAME
     ) -> HTTPShocker:
         """Get a :class:`HTTPShocker` instance for the given share code.
 
-        This is the main entry point for almost all remaining API usages.
+        This is the main entry point for almost all remaining API usages. You must specify at least one of shockerId or name
 
         Arguments:
-            sharecode: The share code generated via the web interface.
+            shockerId: The shocker ID which can be found by clicking the Gear icon in the web interface
+            name: The name of the shocker from the UI
             log_name: How the shocker should be named in the logs on the website.
-            name: Used when converting the :class:`HTTPShocker` to a string,
-                  defaults to ``sharecode``.
         """
-        return HTTPShocker(api=self, sharecode=sharecode, log_name=log_name, name=name)
+        if shocker_id == None and name == None:
+            raise BadShockerRequestError()
+        
+        confirmed_id = shocker_id;
+        
+        if name != None:
+            all_shockers = self.get_shockers()
+            possible_shockers = filter(lambda s: s.name == name, all_shockers)
+            if len(possible_shockers) != 1:
+                raise NonUniqueShockerNameError()
+            confirmed_id = possible_shockers[0].shocker_id
 
-    def get_shockers(self, client_id: int) -> list[core.BasicShockerInfo]:
+        return HTTPShocker(api=self, shocker_id=confirmed_id, log_name=log_name, name=name)
+
+    def get_shockers(self, client_id: int) -> list[core.ApiV3ShockerInfo]:
         """Get a list of all shockers for the given client (PiShock) ID.
 
         Raises:
@@ -195,22 +245,40 @@ class PiShockAPI:
             HTTPError: If the API returns an invalid HTTP status.
             UnknownError: If the response is not JSON.
         """
-        params = {"ClientId": client_id}
 
         with self.translate_http_errors():
-            response = self.request("GetShockers", params)
+            response = self.get("Shockers")
 
         try:
             data = response.json()
         except json.JSONDecodeError:
             raise UnknownError(response.text)
         return [
-            core.BasicShockerInfo.from_get_shockers_api_dict(d, client_id=client_id)
+            core.ApiV3ShockerInfo.from_get_shockers_api_dict(d)
             for d in data
         ]
 
+    def obtain_user_id(self) -> bool:
+        """Obtains and caches the userId associated with this account and API key
+
+        Called by the __init__ method
+        """
+
+        try:
+            response = self.get(endpoint=f"Account")
+            try:
+                data = response.json()
+                self.user_id = data["UserId"]
+            except json.JSONDecodeError:
+                raise UnknownError(response.text)
+        except HTTPError as e:
+            if e.status_code == http.HTTPStatus.FORBIDDEN:
+                return False
+            raise
+        return True
+
     def verify_credentials(self) -> bool:
-        """Check if the API credentials are valid.
+        """Check if the API credentials are valid. Must be called to obtain the UserID
 
         Returns:
             ``True`` on success, ``False`` on authentication failure.
@@ -219,48 +287,15 @@ class PiShockAPI:
             HTTPError: If the API returns an invalid HTTP status.
         """
         try:
-            self.request("VerifyApiCredentials", {})
+            self.get(endpoint=f"Account/{self.user_id}")
         except HTTPError as e:
             if e.status_code == http.HTTPStatus.FORBIDDEN:
                 return False
             raise
         return True
 
-
-@dataclasses.dataclass
-class DetailedShockerInfo(core.BasicShockerInfo):
-    """Detailed information about a shocker.
-
-    Used by :meth:`HTTPShocker.info()`. Calling
-    :meth:`PiShockAPI.get_shockers()` or
-    :meth:`pishock.zap.serialapi.SerialShocker.info()` returns a
-    :class:`pishock.zap.core.BasicShockerInfo` instance instead.
-
-    This class extends :class:`pishock.zap.core.BasicShockerInfo` with the
-    following attributes:
-
-    Attributes:
-        max_intensity: The maximum intensity (0-100) the shocker can be set to.
-        max_duration: The maximum duration (0-15) the shocker can be set to.
-    """
-
-    max_intensity: int
-    max_duration: int
-
-    @classmethod
-    def from_info_api_dict(cls, data: dict[str, Any]) -> DetailedShockerInfo:
-        return cls(
-            name=data["name"],
-            client_id=data["clientId"],
-            shocker_id=data["id"],
-            is_paused=data["paused"],
-            max_intensity=data["maxIntensity"],
-            max_duration=data["maxDuration"],
-        )
-
-
 class HTTPShocker(core.Shocker):
-    """Represents a single shocker / share code using the HTTP API.
+    """Represents a single shocker using the HTTP API.
 
     Normally, there should be no need to instanciate this manually, use
     :meth:`PiShockAPI.shocker()` instead.
@@ -276,8 +311,6 @@ class HTTPShocker(core.Shocker):
         cls.TEXT: cls
         for cls in [
             NotAuthorizedError,
-            ShareCodeNotFoundError,
-            ShareCodeAlreadyUsedError,
             ShockerPausedError,
             DeviceNotConnectedError,
             DeviceInUseError,
@@ -288,65 +321,68 @@ class HTTPShocker(core.Shocker):
     }
 
     def __init__(
-        self, api: PiShockAPI, sharecode: str, name: str | None, log_name: str
+        self, api: PiShockAPI, shocker_id: str, name: str | None, log_name: str
     ) -> None:
         self.api = api
-        self.sharecode = sharecode
+        self.shocker_id = shocker_id
         self.name = name
         self.log_name = log_name
-        self._cached_info: DetailedShockerInfo | None = None
+        self._cached_info: core.ApiV3ShockerInfo | None = None
 
     def __str__(self) -> str:
         if self.name is not None:
             return self.name
         return self.sharecode
 
-    def shock(self, *, duration: int | float, intensity: int) -> None:
-        """Send a shock with the given duration (0-15) and intensity (0-100).
+    def shock(self, *, duration: int | float, intensity: int, min_duration: int | float | None = None, min_intensity: int | None = None, intensity_as_pct: bool = False) -> None:
+        """Send a shock with the given duration (0-15) in seconds and intensity (0-100).
 
-        Durations can also be floats between 0.1 and 1.5 (inclusive), with the
-        following caveats:
+        Durations can be floats between 0.016 and 15.000 or integers between 0 and 15
 
-        - The duration is rounded down to the nearest 0.1 seconds.
-        - On old Plus models, e.g. 0.3 is interpreted as 3s instead of 300ms.
-        - This is an experimental and undocumented feature of the API, so it
-          might break at any time.
+        If min_duration is specified, a random duration will be used between 
+        min_duration and duration.
+
+        If min_intensity is specified, a random intensity will be used between
+        min_intensity and intensity.
+
+        If intensity_as_pct is True, the intensity values will be treated as a percentage of 
+        the shocker's max intensity.
 
         Raises:
             ValueError: ``duration`` or ``intensity`` are out of range.
             APIError: Any of the :exc:`APIError` subclasses in this module,
                refer to their documenation for details.
         """
-        return self._call(Operation.SHOCK, duration=duration, intensity=intensity)
+        return self._call(Operation.SHOCK, duration=duration, intensity=intensity, min_duration=min_duration, min_intensity=min_intensity, intensity_as_pct=intensity_as_pct)
 
-    def vibrate(self, *, duration: int | float, intensity: int) -> None:
-        """Send a vibration with the given duration (0-15) and intensity (0-100).
+    def vibrate(self, *, duration: int | float, intensity: int, min_duration: int | float | None = None, min_intensity: int | None = None, intensity_as_pct: bool = False) -> None:
+        """Send a vibration with the given duration (0-15) in seconds and intensity (0-100).
 
-        Durations can also be floats between 0.1 and 1.5 (inclusive), with the
-        following caveats:
+        Durations can be floats between 0.016 and 15.000 or integers between 0 and 15
 
-        - The duration is rounded down to the nearest 0.1 seconds.
-        - On old Plus models, e.g. 0.3 is interpreted as 3s instead of 300ms.
-        - This is an experimental and undocumented feature of the API, so it
-          might break at any time.
+        If min_duration is specified, a random duration will be used between 
+        min_duration and duration.
+
+        If min_intensity is specified, a random intensity will be used between
+        min_intensity and intensity.
+
+        If intensity_as_pct is True, the intensity values will be treated as a percentage of 
+        the shocker's max intensity.
 
         Raises:
             ValueError: ``duration`` or ``intensity`` are out of range.
             APIError: Any of the :exc:`APIError` subclasses in this
               module, refer to their documenation for details.
         """
-        return self._call(Operation.VIBRATE, duration=duration, intensity=intensity)
+        return self._call(Operation.VIBRATE, duration=duration, intensity=intensity, min_duration=min_duration, min_intensity=min_intensity, intensity_as_pct=intensity_as_pct)
 
-    def beep(self, duration: int | float) -> None:
-        """Send a beep with the given duration (0-15).
+    def beep(self, duration: int | float, min_duration: int | float | None = None) -> None:
+        """Send a beep with the given duration in seconds. 
 
-        Durations can also be floats between 0.1 and 1.5 (inclusive), with the
-        following caveats:
+        Durations can be floats between 0.016 and 15.000 or integers between 0 and 15
 
-        - The duration is rounded down to the nearest 0.1 seconds.
-        - On old Plus models, e.g. 0.3 is interpreted as 3s instead of 300ms.
-        - This is an experimental and undocumented feature of the API, so it
-          might break at any time.
+        If min_duration is specified, a random duration will be used between 
+        min_duration and duration.
 
         Raises:
             ValueError: ``duration`` is out of range.
@@ -356,84 +392,84 @@ class HTTPShocker(core.Shocker):
         return self._call(Operation.BEEP, duration=duration, intensity=None)
 
     def _parse_duration(self, duration: int | float) -> int:
-        if isinstance(duration, float) and not duration.is_integer():
-            if not 0.1 <= duration < 1.6:
-                raise ValueError(
-                    f"float duration needs to be between 0.1 and 1.5, not {duration}"
-                )
-            return int(duration * 1000)  # e.g. 0.1 -> 100 sent to API -> 100ms
-
-        if not 0 <= duration <= 15:
-            raise ValueError(f"duration needs to be between 0 and 15, not {duration}")
-
-        return int(duration)
+        duration_ms = int(duration * 1000) # v3 API always expects ms
+        if duration_ms < 16:
+            return 16
+        return duration_ms
 
     def _call(
-        self, operation: Operation, duration: int | float, intensity: int | None
+        self, operation: Operation, duration: int | float, intensity: int | None, min_duration: int | float | None = None, min_intensity: int | None = None, intensity_as_pct: bool = False
     ) -> None:
+        shocker_info = self.info()
         if intensity is not None and not 0 <= intensity <= 100:
             raise ValueError(
                 f"intensity needs to be between 0 and 100, not {intensity}"
             )
 
+        if intensity is not None and not intensity_as_pct and intensity > shocker_info.max_intensity:
+            raise ValueError(
+                f"shocker has max intensity of {shocker_info.max_intensity}, but was called with {intensity}"
+            )
+
+        if duration > shocker_info.max_duration:
+            raise ValueError(
+                f"duration cannot exceed {shocker_info.max_duration}"
+            )
+
+        if min_duration is not None and not 0 <= min_duration <= duration:
+            raise ValueError(
+                f"Minimum duration must be between 0 and {duration}"
+            )
+        
+        if intensity is None and min_intensity is not None:
+            raise ValueError(
+                "Intensity must be set to use minimum intensity random range"
+            )
+
+        if min_intensity is not None and not 0 <= min_intensity <= intensity:
+            raise ValueError(
+                f"Minimum intensity must be between 0 and {intensity}"
+            )
+        
+
         assert (intensity is None) == (operation == Operation.BEEP)
         assert operation in Operation
 
-        params = {
-            "Name": self.log_name,
-            "Code": self.sharecode,
+        body = {
+            "AgentName": self.log_name,
+            "Operation": operation.value,
             "Duration": self._parse_duration(duration),
-            "Op": operation.value,
+            "Intensity": intensity,
+            "IntensityAsPercentage": intensity_as_pct
         }
-        if intensity is not None:
-            params["Intensity"] = intensity
+        if min_duration is not None:
+            body["MinimumDuration"] = self._parse_duration(min_duration)
 
-        response = self.api.request("apioperate", params)
+        if min_intensity is not None:
+            body["MinimumIntensity"] = min_intensity
+
+        response = self.api.request("apioperate", body=body)
 
         if response.text in self._ERROR_MESSAGES:
             raise self._ERROR_MESSAGES[response.text](response.text)
         elif response.text not in self._SUCCESS_MESSAGES:
             raise UnknownError(response.text)
 
-    def pause(self, pause: bool) -> None:
-        """Pause/unpause the shocker.
-
-        Args:
-            pause: Whether to pause or unpause the shocker.
-
-        Raises:
-            NotAuthorizedError: the API credentials are wrong.
-            UnknownError: The response is not JSON.
-        """
-        if self._cached_info is None:
-            self._cached_info = self.info()
-
-        params = {
-            "ShockerId": self._cached_info.shocker_id,
-            "Pause": pause,
-        }
-        response = self.api.request("PauseShocker", params)
-
-        if response.text == NotAuthorizedError.TEXT:
-            raise NotAuthorizedError(response.text)
-        elif response.text != self._SUCCESS_MESSAGE_PAUSE:
-            raise UnknownError(response.text)
-
-    def info(self) -> DetailedShockerInfo:
-        """Get detailed information about the shocker.
+    def info(self) -> core.ApiV3ShockerInfo:
+        """Get and cache detailed information about the shocker.
 
         Raises:
             NotAuthorizedError: Username/API key is wrong.
-            ShareCodeNotFoundError: The given share code was not found.
             UnknownError: The response is not JSON.
         """
-        params = {"Code": self.sharecode}
+        if self._cached_info is None:
+            with self.api.translate_http_errors():
+                response = self.api.get(f"Shockers/{self.shocker_id}")
 
-        with self.api.translate_http_errors():
-            response = self.api.request("GetShockerInfo", params)
+            try:
+                data = response.json()
+            except json.JSONDecodeError:
+                raise UnknownError(response.text)
+            self._cached_info = core.ApiV3ShockerInfo.from_info_api_dict(data)
 
-        try:
-            data = response.json()
-        except json.JSONDecodeError:
-            raise UnknownError(response.text)
-        return DetailedShockerInfo.from_info_api_dict(data)
+        return self._cached_info
