@@ -107,13 +107,16 @@ class ApiV3ShockerInfo(BasicShockerInfo):
         cls, data: dict[str, Any]
     ) -> ApiV3ShockerInfo:
         return cls(
-            hub_id=data["HubeId"],
+            client_id=data["HubId"],
+            is_paused=False, # V3 shockers aren't pausable
+            hub_id=data["HubId"],
             shocker_id=data["ShockerId"],
             name=data["Name"],
             isV3=data["IsV3"],
-            can_beep=["CanBeep"],
-            can_shock=["CanShock"],
-            can_pause=["CanPause"],
-            max_duration=["MaxDuration"],
-            max_intensity=["MaxIntensity"]
+            can_beep=data["CanBeep"],
+            can_vibrate=data["CanVibrate"],
+            can_shock=data["CanShock"],
+            can_pause=data["CanPause"],
+            max_duration=data["MaxDuration"],
+            max_intensity=data["MaxIntensity"]
         )

@@ -212,32 +212,32 @@ class PiShockAPI:
             raise
 
     def shocker(
-        self, shocker_id: str | None = None, name: str | None = None, log_name: str = NAME
+        self, shocker_id: int | None = None, name: str | None = None, log_name: str = NAME
     ) -> HTTPShocker:
         """Get a :class:`HTTPShocker` instance for the given share code.
 
         This is the main entry point for almost all remaining API usages. You must specify at least one of shockerId or name
 
         Arguments:
-            shockerId: The shocker ID which can be found by clicking the Gear icon in the web interface
+            shocker_id: The shocker ID which can be found by clicking the Gear icon in the web interface
             name: The name of the shocker from the UI
             log_name: How the shocker should be named in the logs on the website.
         """
-        if shocker_id == None and name == None:
+        if shocker_id is None and name is None:
             raise BadShockerRequestError()
         
         confirmed_id = shocker_id;
         
-        if name != None:
+        if name is not None:
             all_shockers = self.get_shockers()
-            possible_shockers = filter(lambda s: s.name == name, all_shockers)
+            possible_shockers = [s for s in all_shockers if s.name == name]
             if len(possible_shockers) != 1:
                 raise NonUniqueShockerNameError()
             confirmed_id = possible_shockers[0].shocker_id
 
         return HTTPShocker(api=self, shocker_id=confirmed_id, log_name=log_name, name=name)
 
-    def get_shockers(self, client_id: int) -> list[core.ApiV3ShockerInfo]:
+    def get_shockers(self) -> list[core.ApiV3ShockerInfo]:
         """Get a list of all shockers for the given client (PiShock) ID.
 
         Raises:
@@ -332,7 +332,7 @@ class HTTPShocker(core.Shocker):
     def __str__(self) -> str:
         if self.name is not None:
             return self.name
-        return self.sharecode
+        return str(self.shocker_id)
 
     def shock(self, *, duration: int | float, intensity: int, min_duration: int | float | None = None, min_intensity: int | None = None, intensity_as_pct: bool = False) -> None:
         """Send a shock with the given duration (0-15) in seconds and intensity (0-100).
@@ -411,6 +411,11 @@ class HTTPShocker(core.Shocker):
                 f"shocker has max intensity of {shocker_info.max_intensity}, but was called with {intensity}"
             )
 
+        if duration < 0:
+            raise ValueError(
+                f"duration cannot be negative, but was called with {duration}"
+            )
+
         if duration > shocker_info.max_duration:
             raise ValueError(
                 f"duration cannot exceed {shocker_info.max_duration}"
@@ -436,7 +441,7 @@ class HTTPShocker(core.Shocker):
         assert operation in Operation
 
         body = {
-            "AgentName": self.log_name,
+            "AgentName": "Python-PiShock",
             "Operation": operation.value,
             "Duration": self._parse_duration(duration),
             "Intensity": intensity,
@@ -448,7 +453,7 @@ class HTTPShocker(core.Shocker):
         if min_intensity is not None:
             body["MinimumIntensity"] = min_intensity
 
-        response = self.api.request("apioperate", body=body)
+        response = self.api.post(f"Shockers/{self.shocker_id}", body=body)
 
         if response.text in self._ERROR_MESSAGES:
             raise self._ERROR_MESSAGES[response.text](response.text)
@@ -470,6 +475,6 @@ class HTTPShocker(core.Shocker):
                 data = response.json()
             except json.JSONDecodeError:
                 raise UnknownError(response.text)
-            self._cached_info = core.ApiV3ShockerInfo.from_info_api_dict(data)
+            self._cached_info = core.ApiV3ShockerInfo.from_get_shockers_api_dict(data)
 
         return self._cached_info
