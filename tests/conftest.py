@@ -71,9 +71,9 @@ def serial_api(
 
 
 class Runner:
-    def __init__(self, sharecode: str) -> None:
+    def __init__(self, shocker_id: str) -> None:
         self._runner = typer.testing.CliRunner()
-        self.sharecode = sharecode  # for ease of access
+        self.shocker_id = str(shocker_id)  # for ease of access
 
     def run(self, *args: str) -> click.testing.Result:
         result = self._runner.invoke(cli.app, args, catch_exceptions=False)
@@ -89,7 +89,7 @@ def runner(monkeypatch: pytest.MonkeyPatch, credentials: FakeCredentials) -> Run
     monkeypatch.setenv("TERM", "dumb")
     monkeypatch.setenv(cli.API_USER_ENV_VAR, credentials.USERNAME)
     monkeypatch.setenv(cli.API_KEY_ENV_VAR, credentials.API_KEY)
-    return Runner(credentials.SHARECODE)
+    return Runner(credentials.SHOCKER_ID)
 
 
 class FakeCredentials:
@@ -404,9 +404,10 @@ class HTTPPatcher(PiShockPatcher):
         self.shocker(
             shocker_id=shocker_id,
             shocker_data={
-                "HubId": 0,
+                "HubId": client_id,
                 "ShockerId": shocker_id,
                 "Name": "test shocker",
+                "IsPaused": paused,
                 "IsV3": True,
                 "CanBeep": True,
                 "CanVibrate": True,

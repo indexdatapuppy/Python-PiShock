@@ -106,9 +106,11 @@ class ApiV3ShockerInfo(BasicShockerInfo):
     def from_get_shockers_api_dict(
         cls, data: dict[str, Any]
     ) -> ApiV3ShockerInfo:
+        is_paused = data.get("IsPaused", False)
+
         return cls(
             client_id=data["HubId"],
-            is_paused=False, # V3 shockers aren't pausable
+            is_paused=is_paused,
             hub_id=data["HubId"],
             shocker_id=data["ShockerId"],
             name=data["Name"],
