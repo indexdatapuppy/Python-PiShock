@@ -40,6 +40,7 @@ class APIError(Exception):
     # "Intensity must be between 0 and {maxint}"
 
     TEXT: str  # set by subclasses
+    CODE: int | None = None
 
 
 class ShareCodeAlreadyUsedError(APIError):
@@ -63,12 +64,50 @@ class NotAuthorizedError(APIError):
     """API returned: Not Authorized."""
 
     TEXT = "Not Authorized."
+    CODE = 401
 
+
+class ForbiddenError(APIError):
+    """API returned: Not Authorized."""
+
+    TEXT = "Forbidden."
+    CODE = 403
+
+class CouldNotFindShare(APIError):
+    """API returned: Could not find share code."""
+    TEXT = "Could not find share code."
+    CODE = 404
+
+class UnsupportedOperationError(APIError):
+    """API returned: Operation not supported."""
+    TEXT = "Operation not supported."
+    CODE = 405
+
+class NotV3ShockersError(APIError):
+    """API returned: Not a v3 shocker."""
+    TEXT = "Not a v3 shocker."
+    CODE = 406
+
+class ShareIsLockedError(APIError):
+    """API returned: Share is locked."""
+    TEXT = "Share is locked."
+    CODE = 410
+
+class IntensityOutOfBoundsError(APIError):
+    """API returned: Intensity out of bounds."""
+    TEXT = "Intensity out of bounds. (Must be between 0 and 100 and lower than max intensity)"
+    CODE = 412
+
+class DurationExceedsLimits(APIError):
+    """API returned: Duration exceeds limits."""
+    TEXT = "Duration exceeds limits. (Must be between 0 and 15 and lower than max duration)"
+    CODE = 416
 
 class ShockerPausedError(APIError):
     """API returned: Shocker is Paused or does not exist. Unpause to send command."""
 
     TEXT = "Shocker is Paused or does not exist. Unpause to send command."
+    CODE = 503
 
 
 class DeviceNotConnectedError(APIError):
@@ -175,7 +214,7 @@ class PiShockAPI:
             "X-PiShock-Api-Key": f"{self.api_key}",
             "X-PiShock-UserId": f"{self.username}",
         }
-        
+
         if (method == METHOD_GET):
             response = requests.get(
                 f"https://api.pishock.com/{endpoint}",
@@ -319,6 +358,20 @@ class HTTPShocker(core.Shocker):
             BeepNotAllowedError,
         ]
     }
+    _ERROR_MESSAGES_BY_CODE = {
+        cls.CODE: cls
+        for cls in [
+            NotAuthorizedError,
+            ForbiddenError,
+            CouldNotFindShare,
+            UnsupportedOperationError,
+            NotV3ShockersError,
+            ShareIsLockedError,
+            IntensityOutOfBoundsError,
+            DurationExceedsLimits,
+            ShockerPausedError,
+        ]
+    }
 
     def __init__(
         self, api: PiShockAPI, shocker_id: str, name: str | None, log_name: str
@@ -444,21 +497,29 @@ class HTTPShocker(core.Shocker):
             "AgentName": "Python-PiShock",
             "Operation": operation.value,
             "Duration": self._parse_duration(duration),
-            "Intensity": intensity,
             "IntensityAsPercentage": intensity_as_pct
         }
+        if intensity is not None:
+            body["Intensity"] = intensity
+        else:
+            body["Intensity"] = 0
+
         if min_duration is not None:
             body["MinimumDuration"] = self._parse_duration(min_duration)
+        else:
+            body["MinimumDuration"] = 0
 
         if min_intensity is not None:
             body["MinimumIntensity"] = min_intensity
+        else:
+            body["MinimumIntensity"] = 0
 
         response = self.api.post(f"Shockers/{self.shocker_id}", body=body)
 
-        if response.text in self._ERROR_MESSAGES:
-            raise self._ERROR_MESSAGES[response.text](response.text)
-        elif response.text not in self._SUCCESS_MESSAGES:
-            raise UnknownError(response.text)
+        if response.status_code != 204:
+            if response.status_code in self._ERROR_MESSAGES_BY_CODE:
+                raise self._ERROR_MESSAGES_BY_CODE[response.status_code](response.text)
+            raise APIError(f"Unknown error {response.status_code}: {response.text}");
 
     def info(self) -> core.ApiV3ShockerInfo:
         """Get and cache detailed information about the shocker.

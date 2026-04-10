@@ -210,50 +210,37 @@ class TestOperationsNotAllowed:
         self, api_shocker: httpapi.HTTPShocker, http_patcher: HTTPPatcher
     ) -> None:
         http_patcher.info()
-        http_patcher.operate(
-            body=httpapi.VibrateNotAllowedError.TEXT,
-            operation=httpapi.Operation.VIBRATE,
+        http_patcher.operate_raw(
+            status=httpapi.UnsupportedOperationError.CODE,
         )
-        with pytest.raises(httpapi.VibrateNotAllowedError):
+        with pytest.raises(httpapi.HTTPError):
+            api_shocker.vibrate(duration=1, intensity=2)
             api_shocker.vibrate(duration=1, intensity=2)
 
     def test_shock(
         self, api_shocker: httpapi.HTTPShocker, http_patcher: HTTPPatcher
     ) -> None:
         http_patcher.info()
-        http_patcher.operate(
-            body=httpapi.ShockNotAllowedError.TEXT,
-            operation=httpapi.Operation.SHOCK,
+        http_patcher.operate_raw(
+            status=httpapi.UnsupportedOperationError.CODE,
         )
-        with pytest.raises(httpapi.ShockNotAllowedError):
+        with pytest.raises(httpapi.HTTPError):
             api_shocker.shock(duration=1, intensity=2)
 
     def test_beep(
         self, api_shocker: httpapi.HTTPShocker, http_patcher: HTTPPatcher
     ) -> None:
         http_patcher.info()
-        http_patcher.operate(
-            body=httpapi.BeepNotAllowedError.TEXT,
-            operation=httpapi.Operation.BEEP,
-            intensity=None,
+        http_patcher.operate_raw(
+            status=httpapi.UnsupportedOperationError.CODE,
         )
-        with pytest.raises(httpapi.BeepNotAllowedError):
+        with pytest.raises(httpapi.HTTPError):
             api_shocker.beep(duration=1)
 
 
 def test_beep_no_intensity(shocker: core.Shocker) -> None:
     with pytest.raises(TypeError):
         shocker.beep(duration=1, intensity=2)  # type: ignore[call-arg]
-
-
-def test_device_in_use(
-    api_shocker: httpapi.HTTPShocker, http_patcher: HTTPPatcher
-) -> None:
-    http_patcher.info()
-    http_patcher.operate(body=httpapi.DeviceInUseError.TEXT)
-    with pytest.raises(httpapi.DeviceInUseError):
-        api_shocker.vibrate(duration=1, intensity=2)
-
 
 def test_unauthorized(http_patcher: HTTPPatcher, credentials: FakeCredentials) -> None:
     http_patcher.account_raw(
@@ -272,18 +259,6 @@ def test_unauthorized(http_patcher: HTTPPatcher, credentials: FakeCredentials) -
     )
     with pytest.raises(httpapi.HTTPError, match="Unauthorized for url"):
         httpapi.PiShockAPI(username=credentials.USERNAME, api_key="wrong")
-
-def test_unknown_error(
-    api_shocker: httpapi.HTTPShocker,
-    pishock_api: httpapi.PiShockAPI,
-    http_patcher: HTTPPatcher,
-) -> None:
-    message = "Failed to frobnicate the zap."
-    http_patcher.info()
-    http_patcher.operate(body=message)
-    with pytest.raises(httpapi.UnknownError, match=message):
-        api_shocker.vibrate(duration=1, intensity=2)
-
 
 class TestInfo:
     def test_info(

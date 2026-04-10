@@ -359,7 +359,11 @@ class HTTPPatcher(PiShockPatcher):
         ]
 
     def operate_raw(self, shocker_id: int = FakeCredentials.SHOCKER_ID, **kwargs: Any) -> None:
-        self.responses.post(f"{APIURLs.SHOCKERS}/{shocker_id}", **kwargs)
+        kwargs.pop("body", None)
+        self.responses.post(
+            f"{APIURLs.SHOCKERS}/{shocker_id}",
+            **kwargs,
+        )
 
     def operate(
             self,
@@ -370,8 +374,9 @@ class HTTPPatcher(PiShockPatcher):
             intensity: int | None = 2,
             name: str | None = None,
             apikey: str | None = None,
-            code: str | None = None,
+            code: int | None = None,
     ) -> None:
+        expected_intensity = 0 if intensity is None else intensity
         self.operate_raw(
             body=body,
             match=[
@@ -379,11 +384,14 @@ class HTTPPatcher(PiShockPatcher):
                     "AgentName": httpapi.NAME,
                     "Operation": operation.value,
                     "Duration": max(16, int(duration * 1000)),
-                    "Intensity": intensity,
+                    "Intensity": expected_intensity,
                     "IntensityAsPercentage": False,
+                    "MinimumDuration": 0,
+                    "MinimumIntensity": 0,
                 }),
                 matchers.header_matcher(self.HEADERS),
             ],
+            status=http.HTTPStatus.NO_CONTENT,
         )
 
     def info_raw(self, shocker_id: int = FakeCredentials.SHOCKER_ID, **kwargs: Any) -> None:
